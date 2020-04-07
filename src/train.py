@@ -273,7 +273,7 @@ if __name__ == "__main__":
 
     run(name="basic-binary-classification",
         seed=626, device_id=0,
-        model_name="efficientnet-b0", pretrained=True, weights=None,
+        model_name="resnet18", pretrained=True, weights=None,
         image_dir="data/train", annot_file="data/train.csv",
         cv_splits=5, cv_fold=0, cv_split_seed=0,
         input_size=224, batch_size=32, num_epochs=64,
