@@ -1,5 +1,6 @@
 albumentations
 numpy
+opencv-python
 pandas
 scikit-learn
 torch
