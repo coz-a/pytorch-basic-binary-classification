@@ -1,0 +1,7 @@
+albumentations
+numpy
+pandas
+scikit-learn
+torch
+torchvision
+tqdm
