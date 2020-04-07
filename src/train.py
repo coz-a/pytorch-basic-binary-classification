@@ -34,7 +34,7 @@ def get_model(name: str, pretrained: bool) -> nn.Module:
         pretrained_model = build_fn(pretrained=True)
         state_dict = pretrained_model.state_dict()
         del state_dict["fc.weight"], state_dict["fc.bias"]
-        model.load_state_dict(state_dict)
+        model.load_state_dict(state_dict, strict=False)
     return model
 
 
