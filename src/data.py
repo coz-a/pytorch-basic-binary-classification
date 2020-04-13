@@ -1,23 +1,31 @@
 from pathlib import Path
-import pandas as pd
+import numpy as np
 from torch.utils.data import Dataset
 import cv2
 
 NORMALIZE_PARAMS = dict(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
 
-class CustomDataSet(Dataset):
+class ImagewoofBinaryDataSet(Dataset):
 
-    def __init__(self, image_dir, annot_file, transforms=None):
-        self.image_files = sorted(Path(image_dir).glob("*.jpg"))
-        self.annots = pd.read_csv(annot_file, index_col=0).iloc[:, 0]
+    def __init__(self, image_dir, neg_classes=["n02086240"], pos_classes=["n02087394"], transforms=None):
+        neg_files = sum([
+            sorted((Path(image_dir) / _).glob("*.JPEG"))
+            for _ in neg_classes
+        ], [])
+        pos_files = sum([
+            sorted((Path(image_dir) / _).glob("*.JPEG"))
+            for _ in pos_classes
+        ], [])
+        self.image_files = neg_files + pos_files
+        self.labels = np.array([0] * len(neg_files) + [1] * len(pos_files))
         self.transforms = transforms
 
     def __getitem__(self, i):
         image_file = self.image_files[i]
         image = cv2.imread(str(image_file))[..., ::-1]  # bgr to rgb
         image_id = image_file.stem
-        label = self.annots[image_id]
+        label = self.labels[i]
         sample = dict(
             image_id=image_id,
             image=image,
@@ -30,8 +38,23 @@ class CustomDataSet(Dataset):
     def __len__(self):
         return len(self.image_files)
 
-    def get_all_labels(self):
-        return [self.annots[_.stem] for _ in self.image_files]
+
+def oversample(labels):
+    classes = np.unique(labels)
+    indices = [np.where(labels == _)[0] for _ in classes]
+    n_largest = max(len(_) for _ in indices)
+    return np.concatenate(
+        [_oversample(_, n_largest) for _ in indices]
+    )
+
+
+def _oversample(samples, n_target):
+    n_samples = len(samples)
+    if n_samples >= n_target:
+        return samples
+    quot = n_target // n_samples
+    rem = n_target % n_samples
+    return np.concatenate([samples] * quot + [samples[:rem]])
 
 
 class Transformed(Dataset):

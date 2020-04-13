@@ -2,6 +2,7 @@ import random
 import datetime
 from pathlib import Path
 import numpy as np
+import cv2
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import roc_auc_score
 import torch
@@ -16,7 +17,7 @@ from torchvision.transforms import Compose, ToTensor, Normalize
 import torchvision.models as models
 import albumentations as albm
 from tqdm import tqdm
-from .data import NORMALIZE_PARAMS, CustomDataSet, Transformed
+from .data import NORMALIZE_PARAMS, ImagewoofBinaryDataSet, oversample, Transformed
 from .transforms import Partial
 
 
@@ -39,31 +40,35 @@ def get_model(name: str, pretrained: bool) -> nn.Module:
 
 
 def get_loaders(
-        image_dir, annot_file, cv_splits, cv_fold,
-        aug_rot_limit, aug_gamma_limit,
+        image_dir, cv_splits, cv_fold,
+        aug_scale_limit, aug_rot_limit, aug_shear_limit,
         aug_brightness_limit, aug_contrast_limit,
         input_size, batch_size, seed, cv_split_seed):
 
     def worker_init_fn(worker_id):
         init_seed(seed + worker_id)
 
-    dataset = CustomDataSet(image_dir, annot_file)
+    dataset = ImagewoofBinaryDataSet(image_dir)
 
     cv = list(
         StratifiedKFold(n_splits=cv_splits, shuffle=True, random_state=cv_split_seed)
-        .split(np.arange(len(dataset)), dataset.get_all_labels())
+        .split(np.arange(len(dataset)), dataset.labels)
     )
     train_indices, val_indices = cv[cv_fold]
 
     train_transforms, val_transforms = get_transforms(
-        input_size=input_size,
+        input_size=dataset[0]["image"].shape[0],
+        target_size=input_size,
+        aug_scale_limit=aug_scale_limit,
         aug_rot_limit=aug_rot_limit,
-        aug_gamma_limit=aug_gamma_limit,
+        aug_shear_limit=aug_shear_limit,
         aug_brightness_limit=aug_brightness_limit,
         aug_contrast_limit=aug_contrast_limit)
 
     train_dataset = Transformed(
-        Subset(dataset, train_indices),
+        Subset(dataset, train_indices[
+            oversample(dataset.labels[train_indices])
+        ]),
         transforms=Compose([
             lambda data: train_transforms(**data),
             Partial(ToTensor(), "image"),
@@ -92,19 +97,28 @@ def get_loaders(
 
 
 def get_transforms(
-        input_size, aug_rot_limit,
-        aug_gamma_limit, aug_brightness_limit, aug_contrast_limit):
+        input_size, target_size, aug_scale_limit, aug_rot_limit, aug_shear_limit,
+        aug_brightness_limit, aug_contrast_limit):
+    crop_size = int(input_size * 0.9)
+    base_size = int(target_size * 1.14)
     train_transforms = albm.Compose([
-        albm.RandomCrop(input_size, input_size),
-        albm.RandomGamma(
-            gamma_limit=aug_gamma_limit, p=1.0),
+        albm.IAAAffine(
+            scale=aug_scale_limit,
+            rotate=aug_rot_limit,
+            shear=aug_shear_limit,
+            p=1.0),
+        albm.CenterCrop(crop_size, crop_size),
+        albm.Resize(base_size, base_size),
+        albm.RandomCrop(target_size, target_size),
         albm.RandomBrightnessContrast(
             brightness_limit=aug_brightness_limit,
-            contrast_limit=aug_contrast_limit, p=1.0),
+            contrast_limit=aug_contrast_limit,
+            p=1.0),
         albm.HorizontalFlip()
     ])
     val_transforms = albm.Compose([
-        albm.CenterCrop(input_size, input_size)
+        albm.Resize(base_size, base_size),
+        albm.CenterCrop(target_size, target_size)
     ])
     return train_transforms, val_transforms
 
@@ -144,8 +158,9 @@ def get_criterion(name: str, config: dict):
 
 def run(name, seed, device_id,
         model_name, pretrained, weights, num_epochs,
-        image_dir, annot_file, cv_splits, cv_fold,
-        aug_rot_limit, aug_gamma_limit, aug_brightness_limit, aug_contrast_limit,
+        image_dir, cv_splits, cv_fold,
+        aug_scale_limit, aug_rot_limit, aug_shear_limit,
+        aug_brightness_limit, aug_contrast_limit,
         input_size, batch_size, cv_split_seed,
         criterion_name, criterion_config,
         optimizer_name, optimizer_config,
@@ -166,8 +181,8 @@ def run(name, seed, device_id,
     dp_model = nn.DataParallel(model)
 
     train_loader, val_loader = get_loaders(
-        image_dir, annot_file, cv_splits, cv_fold,
-        aug_rot_limit, aug_gamma_limit,
+        image_dir, cv_splits, cv_fold,
+        aug_scale_limit, aug_rot_limit, aug_shear_limit,
         aug_brightness_limit, aug_contrast_limit,
         input_size, batch_size,
         seed=seed, cv_split_seed=cv_split_seed)
@@ -274,11 +289,12 @@ if __name__ == "__main__":
     run(name="basic-binary-classification",
         seed=626, device_id=0,
         model_name="resnet18", pretrained=True, weights=None,
-        image_dir="data/train", annot_file="data/train.csv",
+        image_dir="data/imagewoof/train",
         cv_splits=5, cv_fold=0, cv_split_seed=0,
         input_size=224, batch_size=32, num_epochs=64,
-        aug_rot_limit=1.0,
-        aug_gamma_limit=(90, 110),
+        aug_scale_limit=(0.9, 1.1),
+        aug_rot_limit=10,
+        aug_shear_limit=10,
         aug_brightness_limit=0.1,
         aug_contrast_limit=0.1,
         criterion_name="bce",
